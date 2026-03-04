@@ -4,8 +4,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/juange/kindlecli/internal/amazon"
-	"github.com/juange/kindlecli/internal/config"
+	"github.com/juange87/kindlecli/internal/amazon"
+	"github.com/juange87/kindlecli/internal/config"
 	"github.com/spf13/cobra"
 )
 

@@ -1,4 +1,4 @@
-module github.com/juange/kindlecli
+module github.com/juange87/kindlecli
 
 go 1.25.5
 

@@ -33,19 +33,20 @@ func (s *Signer) DigestHeaderForRequest(method, path, postData, signingDate stri
 
 // rsaSignCustomPadding replicates stkclient's signing scheme:
 // PKCS#1 v1.5 type 1 padding without DigestInfo prefix.
-// Block: 0x01 || 0xFF * (keySize - hashLen - 2) || 0x00 || hash
+// Block: 0x00 || 0x01 || 0xFF * (keySize - hashLen - 3) || 0x00 || hash
 // Then raw RSA: c = m^d mod n
 func rsaSignCustomPadding(key *rsa.PrivateKey, hash []byte) []byte {
 	keySize := key.Size() // bytes (256 for 2048-bit)
 
 	padded := make([]byte, keySize)
-	padded[0] = 0x01
-	psLen := keySize - len(hash) - 2
-	for i := 1; i <= psLen; i++ {
+	// padded[0] = 0x00 (already zero from make)
+	padded[1] = 0x01
+	psLen := keySize - len(hash) - 3
+	for i := 2; i < 2+psLen; i++ {
 		padded[i] = 0xFF
 	}
-	padded[psLen+1] = 0x00
-	copy(padded[psLen+2:], hash)
+	// padded[2+psLen] = 0x00 (already zero from make)
+	copy(padded[keySize-len(hash):], hash)
 
 	m := new(big.Int).SetBytes(padded)
 	c := new(big.Int).Exp(m, key.D, key.N)

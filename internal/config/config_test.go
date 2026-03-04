@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/juange/kindlecli/internal/amazon"
+	"github.com/juange87/kindlecli/internal/amazon"
 )
 
 func TestSaveAndLoad(t *testing.T) {

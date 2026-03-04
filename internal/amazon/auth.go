@@ -10,9 +10,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"net/url"
 	"strings"
+	"time"
 )
+
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 const (
 	clientID    = "658490dfb190e494030082836775981fa23be0c2425441860352ba0f55915b43002d"
@@ -57,15 +61,28 @@ func (o *OAuth2) GetSignInURL() string {
 	return signinBase + "?" + params.Encode()
 }
 
+// Verbose controls whether auth progress is logged to stderr.
+var Verbose bool
+
 func (o *OAuth2) CreateClient(redirectURL string) (DeviceInfo, error) {
 	code, err := parseAuthorizationCode(redirectURL)
 	if err != nil {
 		return DeviceInfo{}, err
 	}
+	if Verbose {
+		fmt.Fprintf(os.Stderr, "  Authorization code: %s...\n", code[:min(len(code), 10)])
+	}
+
+	fmt.Fprintf(os.Stderr, "  Exchanging token...\n")
 	accessToken, err := tokenExchange(code, o.verifier)
 	if err != nil {
 		return DeviceInfo{}, fmt.Errorf("token exchange: %w", err)
 	}
+	if Verbose {
+		fmt.Fprintf(os.Stderr, "  Access token received.\n")
+	}
+
+	fmt.Fprintf(os.Stderr, "  Registering device...\n")
 	info, err := registerDevice(accessToken)
 	if err != nil {
 		return DeviceInfo{}, fmt.Errorf("device registration: %w", err)
@@ -104,7 +121,7 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("x-amzn-identity-auth-domain", "api.amazon.com")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -134,7 +151,7 @@ func registerDevice(accessToken string) (DeviceInfo, error) {
 	req.Header.Set("Accept-Language", "en-US,*")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return DeviceInfo{}, err
 	}

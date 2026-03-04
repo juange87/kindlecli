@@ -2,22 +2,20 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 
-	"github.com/juange/kindlecli/internal/amazon"
-	"github.com/juange/kindlecli/internal/config"
+	"github.com/juange87/kindlecli/internal/amazon"
+	"github.com/juange87/kindlecli/internal/config"
 	"github.com/spf13/cobra"
 )
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Log in to your Amazon account",
-	Long:  "Opens your browser for Amazon OAuth2 login. After signing in, paste the redirect URL back here.",
+	Long:  "Opens your browser for Amazon OAuth2 login. After signing in, the URL is read from your clipboard.",
 	RunE:  runLogin,
 }
 
@@ -37,6 +35,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	amazon.Verbose = verbose
 	oauth := amazon.NewOAuth2()
 	signinURL := oauth.GetSignInURL()
 
@@ -47,13 +46,29 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	fmt.Print("After signing in, paste the redirect URL here: ")
-	reader := bufio.NewReader(os.Stdin)
-	redirectURL, _ := reader.ReadString('\n')
+	fmt.Println("After signing in, you will be redirected to the Send to Kindle page.")
+	fmt.Println("Copy the FULL URL from your browser's address bar (Cmd+L, Cmd+C).")
+	fmt.Println()
+	fmt.Print("Then press Enter here to read from clipboard...")
+	// Wait for Enter
+	fmt.Scanln()
+
+	redirectURL, err := readClipboard()
+	if err != nil {
+		return fmt.Errorf("could not read clipboard: %w\nCopy the URL and try again", err)
+	}
 	redirectURL = strings.TrimSpace(redirectURL)
 
 	if redirectURL == "" {
-		return fmt.Errorf("no URL provided")
+		return fmt.Errorf("clipboard is empty. Copy the URL from the browser and try again")
+	}
+
+	if !strings.Contains(redirectURL, "openid.oa2.authorization_code") {
+		return fmt.Errorf("URL does not contain an authorization code. Make sure you copied the full URL from the browser after signing in")
+	}
+
+	if verbose {
+		fmt.Printf("  URL length: %d chars\n", len(redirectURL))
 	}
 
 	fmt.Println("Authenticating...")
@@ -74,6 +89,22 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func readClipboard() (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		out, err := exec.Command("pbpaste").Output()
+		return string(out), err
+	case "linux":
+		out, err := exec.Command("xclip", "-selection", "clipboard", "-o").Output()
+		return string(out), err
+	case "windows":
+		out, err := exec.Command("powershell", "-command", "Get-Clipboard").Output()
+		return string(out), err
+	default:
+		return "", fmt.Errorf("unsupported platform for clipboard")
+	}
+}
+
 func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -88,3 +119,4 @@ func openBrowser(url string) error {
 	}
 	return cmd.Start()
 }
+

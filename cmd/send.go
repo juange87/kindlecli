@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/juange/kindlecli/internal/amazon"
-	"github.com/juange/kindlecli/internal/config"
+	"github.com/juange87/kindlecli/internal/amazon"
+	"github.com/juange87/kindlecli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -95,7 +95,12 @@ func runSend(cmd *cobra.Command, args []string) error {
 		sizeMB := float64(stat.Size()) / 1024 / 1024
 		fmt.Printf("Sending %s (%.1f MB)...\n", filepath.Base(filePath), sizeMB)
 
-		_, err = client.SendFile(filePath, serials, title, sendAuthor)
+		author := sendAuthor
+		if author == "" {
+			author = "Unknown"
+		}
+
+		_, err = client.SendFile(filePath, serials, title, author)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to send %s: %v\n", filePath, err)
 			continue

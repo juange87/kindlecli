@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/juange/kindlecli/internal/amazon"
+	"github.com/juange87/kindlecli/internal/amazon"
 )
 
 const authFile = "auth.json"

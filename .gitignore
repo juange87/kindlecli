@@ -1,2 +1,24 @@
+# Binary
 kindlecli
+
+# Logs
 *.log
+
+# Credentials / secrets
+auth.json
+*.pem
+*.key
+.env
+.env.*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
+.claude/

@@ -125,7 +125,7 @@ func (c *Client) uploadFile(uploadURL, filePath string, fileSize int64) error {
 	req.Header.Set("Accept-Language", "en-US,*")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (c *Client) Logout() error {
 	req.Header.Set("Accept-Language", "en-US,*")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (c *Client) stkRequest(path string, payload map[string]any) ([]byte, error)
 	req.Header.Set("Accept-Language", "en-US,*")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
