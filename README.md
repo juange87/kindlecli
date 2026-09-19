@@ -224,3 +224,20 @@ may already have been accepted when a connection fails.
 `logout` always attempts local cleanup, including pending logins. If Amazon's
 remote deregistration fails, a warning is printed; deleting local credentials
 alone does not prove that Amazon deregistered the virtual device.
+
+## Development
+
+Use a current stable Go release to build the binary (the module's minimum remains
+Go 1.25.5 for compatibility). CI tests that minimum and the current stable release,
+including Linux, macOS and Windows, and checks formatting, `go vet`, module
+consistency and known reachable vulnerabilities. Dependabot proposes module and
+GitHub Actions updates weekly.
+
+```bash
+go test -race ./...
+go vet ./...
+go build ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+```
+
+Tests use synthetic credentials and local HTTP servers, never your Amazon account.
