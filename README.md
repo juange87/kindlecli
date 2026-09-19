@@ -215,3 +215,12 @@ if any file is invalid or fails to upload. Successful files in a partially faile
 batch are not rolled back; retry only failed files to avoid duplicates. A rejected
 session stops the remaining batch. “Accepted by Amazon” confirms API acceptance,
 not that the document has already arrived on a Kindle.
+
+Uploads have a separate 10-minute timeout; change it with
+`kindlecli send --upload-timeout 20m large.pdf`. API calls retain a 30-second
+limit. Uploads and deliveries are not automatically retried, since a delivery
+may already have been accepted when a connection fails.
+
+`logout` always attempts local cleanup, including pending logins. If Amazon's
+remote deregistration fails, a warning is printed; deleting local credentials
+alone does not prove that Amazon deregistered the virtual device.

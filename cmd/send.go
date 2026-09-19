@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,7 @@ var sendCmd = &cobra.Command{
 func init() {
 	sendCmd.Flags().StringVar(&sendTitle, "title", "", "document title (default: filename)")
 	sendCmd.Flags().StringVar(&sendAuthor, "author", "", "document author")
+	sendCmd.Flags().Duration("upload-timeout", 10*time.Minute, "maximum time per file upload (e.g. 20m)")
 	rootCmd.AddCommand(sendCmd)
 }
 
@@ -84,6 +86,10 @@ func prepareDocuments(paths []string, title, author string) ([]document, []error
 }
 
 func runSend(cmd *cobra.Command, args []string) error {
+	timeout, _ := cmd.Flags().GetDuration("upload-timeout")
+	if timeout <= 0 {
+		return fmt.Errorf("--upload-timeout must be greater than zero")
+	}
 	documents, failures := prepareDocuments(args, sendTitle, sendAuthor)
 	for _, err := range failures {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Skipping:", err)
@@ -95,6 +101,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	client.UploadTimeout = timeout
 	return sendDocuments(cmd, client, documents, len(failures))
 }
 

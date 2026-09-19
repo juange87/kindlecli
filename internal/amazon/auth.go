@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+var httpClient = &http.Client{
+	Timeout:       30 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 const (
 	clientID    = "658490dfb190e494030082836775981fa23be0c2425441860352ba0f55915b43002d"
@@ -140,7 +143,7 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", &NetworkError{Operation: "token exchange", Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -151,7 +154,7 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 	var result struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&result); err != nil {
 		return "", err
 	}
 	if result.AccessToken == "" {
@@ -176,11 +179,11 @@ func registerDevice(accessToken string) (DeviceInfo, error) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return DeviceInfo{}, err
+		return DeviceInfo{}, &NetworkError{Operation: "device registration", Err: err}
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body)
 	if err != nil {
 		return DeviceInfo{}, err
 	}

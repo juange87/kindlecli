@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -30,6 +32,8 @@ var defaultClientInfo = map[string]string{
 // Client provides access to the Send-to-Kindle API.
 type Client struct {
 	Signer *Signer
+	// UploadTimeout overrides the default 10-minute upload deadline.
+	UploadTimeout time.Duration
 }
 
 // NewClient creates a Client from DeviceInfo.
@@ -79,6 +83,9 @@ func (c *Client) SendFile(filePath string, deviceSerials []string, title, author
 	if err != nil {
 		return "", fmt.Errorf("stat file: %w", err)
 	}
+	if !stat.Mode().IsRegular() || stat.Size() == 0 {
+		return "", fmt.Errorf("expected a nonempty regular file")
+	}
 	fileSize := stat.Size()
 
 	// 1. Get upload URL
@@ -113,6 +120,11 @@ func (c *Client) getUploadURL(fileSize int64) (GetUploadUrlResponse, error) {
 }
 
 func (c *Client) uploadFile(uploadURL, filePath string, fileSize int64) error {
+	u, err := url.Parse(uploadURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return fmt.Errorf("Amazon returned an invalid HTTPS upload URL")
+	}
+
 	f, err := os.Open(filePath)
 	if err != nil {
 		return err
@@ -124,21 +136,24 @@ func (c *Client) uploadFile(uploadURL, filePath string, fileSize int64) error {
 		return err
 	}
 	req.ContentLength = fileSize
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
 	req.Header.Set("Accept-Language", "en-US,*")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
-	resp, err := httpClient.Do(req)
+	uploadClient := *httpClient
+	uploadClient.Timeout = 10 * time.Minute
+	if c.UploadTimeout > 0 {
+		uploadClient.Timeout = c.UploadTimeout
+	}
+	resp, err := uploadClient.Do(req)
 	if err != nil {
-		return err
+		return &NetworkError{Operation: "upload", Err: err}
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload failed (%d): %s", resp.StatusCode, string(b))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return responseError("upload", resp.StatusCode, nil, false)
 	}
-	return nil
+	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+	return err
 }
 
 func (c *Client) sendToKindle(stkToken string, deviceSerials []string, title, author, format string) (SendToKindleResponse, error) {
@@ -176,11 +191,14 @@ func (c *Client) Logout() error {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return &NetworkError{Operation: "device logout", Err: err}
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
-	return nil
+	if resp.StatusCode != http.StatusOK {
+		return responseError("device logout", resp.StatusCode, nil, false)
+	}
+	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+	return err
 }
 
 func (c *Client) stkRequest(path string, payload map[string]any) ([]byte, error) {
@@ -199,7 +217,6 @@ func (c *Client) stkRequest(path string, payload map[string]any) ([]byte, error)
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ADP-Request-Digest", digest)
 	req.Header.Set("X-ADP-Authentication-Token", c.Signer.ADPToken)
@@ -208,11 +225,11 @@ func (c *Client) stkRequest(path string, payload map[string]any) ([]byte, error)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &NetworkError{Operation: path, Err: err}
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}
