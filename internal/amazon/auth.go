@@ -152,13 +152,17 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 	}
 
 	var result struct {
-		AccessToken string `json:"access_token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&result); err != nil {
 		return "", err
 	}
 	if result.AccessToken == "" {
 		return "", fmt.Errorf("Amazon returned an empty access token")
+	}
+	if Verbose {
+		fmt.Fprintf(os.Stderr, "  Refresh token returned: %t (diagnostic only; not stored).\n", result.RefreshToken != "")
 	}
 	return result.AccessToken, nil
 }

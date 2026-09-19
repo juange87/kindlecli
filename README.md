@@ -241,3 +241,7 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 ```
 
 Tests use synthetic credentials and local HTTP servers, never your Amazon account.
+
+For the live authentication test and the remaining silent-renewal investigation,
+see [the testing guide](docs/authentication-testing.md). `login --verbose` reports
+only whether Amazon returned a refresh token; it never prints or stores that token.
