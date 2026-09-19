@@ -90,3 +90,14 @@ Documentation-only changes need consistency/link checks, not new tests. Update
 README command/flag tables and the authentication guide when changing their
 contracts. Keep generated binaries and all credential/pending files out of Git.
 Follow the user's requested commit and publication workflow.
+
+## Local installation for Hermes
+
+Hermes uses `kindlecli` from PATH, not the repository's `./kindlecli` binary.
+When the task includes updating the CLI used on this machine, run `go install .`
+after validation, inspect `command -v kindlecli` and verify the installed command.
+Use `go version -m` to check its build revision. Do not treat `go build` alone as
+installation. Check for PATH shadowing before creating another binary location.
+An existing Hermes process must resolve the same installation; do not assume its
+PATH if it reports a different version. `@latest` follows release tags and can
+lag behind main, so install the validated checkout for local development.

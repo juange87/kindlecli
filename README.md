@@ -23,6 +23,28 @@ locally built binary, replace `kindlecli` with `./kindlecli` in the examples.
 go install github.com/juange87/kindlecli@latest
 ```
 
+### Update the command used by Hermes
+
+The Hermes skill invokes `kindlecli` from PATH. Building `./kindlecli` alone does
+not update that command. To install the current checkout for use from any directory:
+
+```bash
+go install .
+command -v kindlecli
+kindlecli auth status --json
+```
+
+Go installs into `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset. Ensure
+that directory is in the PATH of the process running Hermes. On this development
+Mac the existing installation is `~/go/bin/kindlecli`.
+
+`go install github.com/juange87/kindlecli@latest` selects the latest released
+version, which can lag behind changes on `main`. To install current main directly:
+
+```bash
+go install github.com/juange87/kindlecli@main
+```
+
 ### Build manually
 
 ```bash

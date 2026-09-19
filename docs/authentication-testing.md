@@ -102,3 +102,12 @@ ningún otro flujo interno de Amazon lo soporte. Antes de implementar renovació
 necesitamos demostrar el intercambio y el registro con ese token y verificar
 `GetListOfOwnedDevices` sin abrir el navegador. Requerirá una sesión real; no se
 puede confirmar con los mocks de los tests ni con la sesión antigua rechazada.
+
+## Resultado de la prueba del 19 de septiembre de 2026
+
+El login interactivo terminó correctamente, aunque Amazon pidió un OTP al usuario.
+El intercambio devolvió `Refresh token returned: false`. Después, las consultas
+reales confirmaron `auth status = valid` y el listado de dispositivos; una segunda
+invocación de `login` reutilizó la sesión sin abrir el navegador. Queda validada la
+recuperación y reutilización de la sesión CLI, pero no un login de navegador sin
+intervención ni la renovación silenciosa del token de dispositivo.
