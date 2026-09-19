@@ -34,7 +34,7 @@ go build -o kindlecli .
 kindlecli login
 ```
 
-This opens your browser for Amazon OAuth2 login. After signing in, you'll be redirected to the Send to Kindle page. Copy the full URL from the address bar, then press Enter in the terminal to read it from your clipboard.
+This opens your browser for Amazon OAuth2 login. After signing in, you'll be redirected to the Send to Kindle page. Paste the full URL from the address bar into the terminal prompt. Use `kindlecli login --clipboard` for the clipboard workflow.
 
 Your session is saved locally at `~/.config/kindlecli/auth.json`.
 
@@ -163,3 +163,47 @@ This tool uses an undocumented Amazon API. It is not affiliated with or endorsed
 ## License
 
 MIT
+
+## Session recovery and automation
+
+`kindlecli auth status` checks the saved credentials with Amazon without sending a
+file. `--json` returns `state` and `message`. States are `valid`, `missing`,
+`invalid`, `rejected`, and `unavailable`; only `valid` exits with code 0.
+A network or service error is `unavailable`, not proof that you need to log in.
+
+`kindlecli login` reuses a valid session and replaces rejected credentials only
+when authentication succeeds. Use `--force` to replace a session explicitly.
+Browser authentication is reused when Amazon permits it; `--fresh` asks Amazon
+for a fresh sign-in. Amazon can still require MFA or a password.
+
+For interactive login, paste the full redirect URL at the prompt. Use
+`--clipboard` to retain the clipboard workflow, or `--no-browser` to open the
+printed URL yourself. Linux clipboard support includes Wayland and X11.
+
+For a skill or another agent, use two invocations with the same config directory:
+
+```bash
+kindlecli login --start --json
+# Open the returned URL in the user's browser.
+# After Amazon redirects, write the full redirect URL to the next command's stdin:
+kindlecli login --finish --json
+kindlecli auth status --json
+```
+
+`--start` returns either `valid` (nothing to do) or `pending` with `url` and
+`expires_at`. A pending login expires after 10 minutes. Starting again replaces
+the pending attempt, so only the most recent URL can be used. `--finish
+--clipboard` can read the copied URL instead of stdin. Never put redirect URLs in
+command-line arguments, shell history, logs, or chat messages: they contain a
+one-time authorization code. Keep browser navigation and URL handling inside the
+agent's local tools. Handle password/MFA prompts in the browser yourself.
+
+Pending PKCE credentials are stored privately in `pending-login.json` and deleted
+after a successful login. A failed login preserves the previous `auth.json`.
+Login commands are serialized using `.login-lock` in the config directory. If a
+process is killed and leaves that directory behind, first ensure no login is
+running, then remove the empty `.login-lock` directory and retry.
+
+This flow automates the handoff to the browser; it does not implement refresh
+of revoked device tokens. Silent token renewal still needs verification against
+Amazon's undocumented device API.

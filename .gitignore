@@ -6,6 +6,9 @@ kindlecli
 
 # Credentials / secrets
 auth.json
+pending-login.json
+.login-lock/
+.kindlecli-*
 *.pem
 *.key
 .env

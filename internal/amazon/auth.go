@@ -7,11 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -26,17 +27,20 @@ const (
 )
 
 type OAuth2 struct {
-	verifier string
+	Verifier string `json:"verifier"`
 }
 
 func NewOAuth2() *OAuth2 {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
-	return &OAuth2{verifier: base64URLEncode(b)}
+	return &OAuth2{Verifier: base64URLEncode(b)}
 }
 
-func (o *OAuth2) GetSignInURL() string {
-	challenge := base64URLEncode(sha256Sum([]byte(o.verifier)))
+func (o *OAuth2) GetSignInURL() string { return o.SignInURL(false) }
+
+// SignInURL allows Amazon to reuse browser authentication unless fresh is requested.
+func (o *OAuth2) SignInURL(fresh bool) string {
+	challenge := base64URLEncode(sha256Sum([]byte(o.Verifier)))
 
 	params := url.Values{
 		"openid.claimed_id":                {"http://specs.openid.net/auth/2.0/identifier_select"},
@@ -51,13 +55,15 @@ func (o *OAuth2) GetSignInURL() string {
 		"openid.oa2.code_challenge_method": {"S256"},
 		"openid.return_to":                 {"https://www.amazon.com/gp/sendtokindle"},
 		"openid.ns.pape":                   {"http://specs.openid.net/extensions/pape/1.0"},
-		"openid.pape.max_auth_age":         {"0"},
 		"accountStatusPolicy":              {"P1"},
 		"openid.assoc_handle":              {"amzn_device_na"},
 		"pageId":                           {"amzn_device_common_dark"},
-		"disableLoginPrepopulate":          {"1"},
 	}
 
+	if fresh {
+		params.Set("openid.pape.max_auth_age", "0")
+		params.Set("disableLoginPrepopulate", "1")
+	}
 	return signinBase + "?" + params.Encode()
 }
 
@@ -70,11 +76,11 @@ func (o *OAuth2) CreateClient(redirectURL string) (DeviceInfo, error) {
 		return DeviceInfo{}, err
 	}
 	if Verbose {
-		fmt.Fprintf(os.Stderr, "  Authorization code: %s...\n", code[:min(len(code), 10)])
+		fmt.Fprintln(os.Stderr, "  Authorization code received.")
 	}
 
 	fmt.Fprintf(os.Stderr, "  Exchanging token...\n")
-	accessToken, err := tokenExchange(code, o.verifier)
+	accessToken, err := tokenExchange(code, o.Verifier)
 	if err != nil {
 		return DeviceInfo{}, fmt.Errorf("token exchange: %w", err)
 	}
@@ -93,9 +99,20 @@ func (o *OAuth2) CreateClient(redirectURL string) (DeviceInfo, error) {
 func parseAuthorizationCode(redirectURL string) (string, error) {
 	u, err := url.Parse(redirectURL)
 	if err != nil {
-		return "", fmt.Errorf("parsing redirect URL: %w", err)
+		return "", fmt.Errorf("invalid redirect URL")
 	}
-	code := u.Query().Get("openid.oa2.authorization_code")
+	if u.Scheme != "https" || u.Host != "www.amazon.com" || u.Path != "/gp/sendtokindle" || u.User != nil || u.Fragment != "" {
+		return "", fmt.Errorf("expected the HTTPS Amazon Send to Kindle redirect URL")
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return "", fmt.Errorf("invalid redirect query")
+	}
+	codes := query["openid.oa2.authorization_code"]
+	if len(codes) != 1 {
+		return "", fmt.Errorf("expected exactly one authorization code")
+	}
+	code := codes[0]
 	if code == "" {
 		return "", fmt.Errorf("no authorization code found in URL")
 	}
@@ -128,8 +145,7 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, string(b))
+		return "", responseError("token exchange", resp.StatusCode, nil, false)
 	}
 
 	var result struct {
@@ -138,12 +154,19 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
+	if result.AccessToken == "" {
+		return "", fmt.Errorf("Amazon returned an empty access token")
+	}
 	return result.AccessToken, nil
 }
 
 func registerDevice(accessToken string) (DeviceInfo, error) {
+	var escaped bytes.Buffer
+	if err := xml.EscapeText(&escaped, []byte(accessToken)); err != nil {
+		return DeviceInfo{}, err
+	}
 	xmlBody := fmt.Sprintf(`<?xml version='1.0' encoding='UTF-8'?>
-<request><parameters><deviceType>A1K6D1WRW0MALS</deviceType><deviceSerialNumber>ZYSQ37GQ5JQDAIKDZ3WYH6I74MJCVEGG</deviceSerialNumber><pid>D21NN3GG</pid><authToken>%s</authToken><authTokenType>AccessToken</authTokenType><softwareVersion>253</softwareVersion><os_version>MacOSX_10.14.6_x64</os_version><device_model>KindleCLI</device_model></parameters></request>`, accessToken)
+<request><parameters><deviceType>A1K6D1WRW0MALS</deviceType><deviceSerialNumber>ZYSQ37GQ5JQDAIKDZ3WYH6I74MJCVEGG</deviceSerialNumber><pid>D21NN3GG</pid><authToken>%s</authToken><authTokenType>AccessToken</authTokenType><softwareVersion>253</softwareVersion><os_version>MacOSX_10.14.6_x64</os_version><device_model>KindleCLI</device_model></parameters></request>`, escaped.String())
 
 	req, _ := http.NewRequest("POST", registerURL, strings.NewReader(xmlBody))
 	req.Header.Set("Content-Type", "text/xml")
@@ -163,10 +186,17 @@ func registerDevice(accessToken string) (DeviceInfo, error) {
 	}
 
 	if resp.StatusCode != 200 {
-		return DeviceInfo{}, fmt.Errorf("device registration failed (%d): %s", resp.StatusCode, string(body))
+		return DeviceInfo{}, responseError("device registration", resp.StatusCode, nil, false)
 	}
 
-	return DeviceInfoFromXML(body)
+	info, err := DeviceInfoFromXML(body)
+	if err != nil {
+		return DeviceInfo{}, fmt.Errorf("invalid device registration response")
+	}
+	if _, err := NewClient(info); err != nil {
+		return DeviceInfo{}, fmt.Errorf("Amazon returned invalid device credentials")
+	}
+	return info, nil
 }
 
 func base64URLEncode(data []byte) string {
