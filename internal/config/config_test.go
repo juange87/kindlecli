@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/juange87/kindlecli/internal/amazon"
@@ -30,7 +31,7 @@ func TestSaveAndLoad(t *testing.T) {
 
 	// Verify file permissions
 	stat, _ := os.Stat(filepath.Join(dir, "auth.json"))
-	if stat.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && stat.Mode().Perm() != 0600 {
 		t.Errorf("file permissions = %o, want 0600", stat.Mode().Perm())
 	}
 
@@ -75,5 +76,56 @@ func TestDefaultDir(t *testing.T) {
 	dir := DefaultDir()
 	if dir == "" {
 		t.Error("DefaultDir returned empty string")
+	}
+}
+
+func TestSaveReplacesPermissionsAndPreservesOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, authFile)
+	if err := os.WriteFile(path, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(dir, amazon.DeviceInfo{ADPToken: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && stat.Mode().Perm() != 0600 {
+		t.Fatalf("mode: %o", stat.Mode().Perm())
+	}
+	before, _ := os.ReadFile(path)
+	if err := SaveJSON(dir, authFile, make(chan int)); err == nil {
+		t.Fatal("expected marshal failure")
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("previous session damaged")
+	}
+	files, _ := os.ReadDir(dir)
+	if len(files) != 1 {
+		t.Fatal("temporary files left behind")
+	}
+}
+
+func TestSaveDoesNotFollowSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, authFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(dir, amazon.DeviceInfo{ADPToken: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(target)
+	if string(data) != "untouched" {
+		t.Fatal("followed symlink")
 	}
 }
