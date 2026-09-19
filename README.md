@@ -8,9 +8,14 @@ A command-line tool to send documents directly to your Kindle devices using Amaz
 - **Multiple formats** — EPUB, PDF, MOBI, AZW, AZW3, DOC, DOCX, TXT, RTF, HTML
 - **Batch send** — send multiple files in a single command
 - **All devices** — automatically sends to every Kindle device on your account
-- **Single binary** — no runtime dependencies, just one Go binary
+- **Session recovery** — check saved credentials and recover rejected sessions
+- **Agent-friendly login** — two-step PKCE login with JSON output
+- **Single binary** — no language runtime needed; optional clipboard mode uses OS utilities
 
 ## Installation
+
+Build with a current stable Go release (minimum: Go 1.25.5). When using the
+locally built binary, replace `kindlecli` with `./kindlecli` in the examples.
 
 ### From source
 
@@ -34,7 +39,7 @@ go build -o kindlecli .
 kindlecli login
 ```
 
-This opens your browser for Amazon OAuth2 login. After signing in, you'll be redirected to the Send to Kindle page. Paste the full URL from the address bar into the terminal prompt. Use `kindlecli login --clipboard` for the clipboard workflow.
+If your saved session is valid, this reuses it without opening a browser. Otherwise, it opens your browser for Amazon OAuth2 login. After signing in, you'll be redirected to the Send to Kindle page. Paste the full URL from the address bar into the terminal prompt. Use `kindlecli login --clipboard` for the clipboard workflow.
 
 Your session is saved locally at `~/.config/kindlecli/auth.json`.
 
@@ -72,7 +77,9 @@ Files are sent to **all** Kindle devices on your account.
 kindlecli logout
 ```
 
-This deregisters the device from your Amazon account and deletes the local session.
+This attempts to deregister the device from Amazon, then deletes the local
+session and pending login. A warning indicates when remote deregistration could
+not be confirmed. You do not need to log out before recovering a rejected session.
 
 ## Supported Formats
 
@@ -88,10 +95,11 @@ This deregisters the device from your Amazon account and deletes the local sessi
 
 | Command | Description |
 |---------|-------------|
-| `login` | Authenticate with Amazon via browser OAuth2 |
+| `login` | Reuse a valid session or authenticate with Amazon via browser OAuth2 |
+| `auth status [--json]` | Verify the saved session with Amazon; exit 0 only when valid |
 | `send` | Upload and send files to all Kindle devices |
 | `devices` | List all Kindle devices on your account |
-| `logout` | Deregister device and delete local session |
+| `logout` | Attempt remote deregistration and delete local credentials and pending login |
 
 ### Global Flags
 
@@ -100,69 +108,28 @@ This deregisters the device from your Amazon account and deletes the local sessi
 | `--config <dir>` | Config directory (default: `~/.config/kindlecli`) |
 | `--verbose` | Enable verbose output for debugging |
 
+### Login Flags
+
+| Flag | Description |
+|------|-------------|
+| `--start` | Save a pending login and print its URL without waiting or opening a browser |
+| `--finish` | Complete the pending login using the redirect URL from stdin |
+| `--json` | Structured output with `--start` or `--finish` |
+| `--force` | Start a new login without checking the existing session |
+| `--fresh` | Ask Amazon for fresh browser authentication; combine with `--force` if the CLI session is valid |
+| `--clipboard` | Read the redirect URL from the clipboard instead of pasting it into stdin |
+| `--no-browser` | Print the URL without opening a browser during interactive login |
+
+`--start` and `--finish` are mutually exclusive. `--finish` cannot be combined
+with `--force`, `--fresh`, or `--no-browser`; `--start` cannot use `--clipboard`.
+
 ### Send Flags
 
 | Flag | Description |
 |------|-------------|
 | `--title <string>` | Document title (default: filename without extension) |
 | `--author <string>` | Document author (default: "Unknown") |
-
-## How It Works
-
-kindlecli uses Amazon's internal Send-to-Kindle API, the same undocumented API that powers Amazon's official desktop applications (Send to Kindle for Mac/PC). The authentication flow works as follows:
-
-1. **OAuth2 PKCE login** — opens a browser for standard Amazon sign-in with a PKCE code challenge
-2. **Token exchange** — exchanges the authorization code for an access token
-3. **Device registration** — registers a virtual device with Amazon, receiving an RSA private key and ADP authentication token
-4. **Signed API requests** — all subsequent API calls are signed with the RSA key using a custom PKCS#1 v1.5 padding scheme (SHA-256 hash, no DigestInfo prefix)
-
-The file upload process:
-1. Request a pre-signed upload URL from `stkservice.amazon.com`
-2. Upload the file via HTTP PUT to the pre-signed URL
-3. Send a delivery request to push the file to your Kindle devices
-
-## Project Structure
-
-```
-kindlecli/
-├── main.go                          # Entry point
-├── cmd/
-│   ├── root.go                      # Cobra root command, global flags
-│   ├── login.go                     # OAuth2 browser login flow
-│   ├── send.go                      # File upload and delivery
-│   ├── devices.go                   # List Kindle devices
-│   └── logout.go                    # Deregister and cleanup
-└── internal/
-    ├── amazon/
-    │   ├── models.go                # Data types (DeviceInfo, OwnedDevice, etc.)
-    │   ├── models_test.go           # XML/JSON parsing tests
-    │   ├── auth.go                  # OAuth2 PKCE, token exchange, device registration
-    │   ├── signer.go                # RSA request signing (custom PKCS#1 v1.5)
-    │   ├── signer_test.go           # Signing tests
-    │   └── stk.go                   # Send-to-Kindle API client
-    └── config/
-        ├── config.go                # Session persistence (~/.config/kindlecli/)
-        └── config_test.go           # Config save/load tests
-```
-
-## Security
-
-- Session credentials are stored at `~/.config/kindlecli/auth.json` with `0600` permissions (owner read/write only)
-- The RSA private key never leaves your machine
-- `kindlecli logout` deregisters the device remotely and deletes local credentials
-- No credentials are logged or transmitted to third parties
-
-## Credits
-
-Inspired by [kindle-send](https://github.com/nikhil1raghav/kindle-send) and based on the Send-to-Kindle API reverse-engineered by [stkclient](https://github.com/maxdjohnson/stkclient).
-
-## Disclaimer
-
-This tool uses an undocumented Amazon API. It is not affiliated with or endorsed by Amazon. The API may change or break at any time.
-
-## License
-
-MIT
+| `--upload-timeout <duration>` | Maximum time per file upload (default: `10m`) |
 
 ## Session recovery and automation
 
@@ -192,14 +159,14 @@ kindlecli auth status --json
 
 `--start` returns either `valid` (nothing to do) or `pending` with `url` and
 `expires_at`. A pending login expires after 10 minutes. Starting again replaces
-the pending attempt, so only the most recent URL can be used. `--finish
---clipboard` can read the copied URL instead of stdin. Never put redirect URLs in
+the pending attempt, so only the most recent URL can be used. `--finish --clipboard` can read the copied URL instead of stdin. Never put redirect URLs in
 command-line arguments, shell history, logs, or chat messages: they contain a
 one-time authorization code. Keep browser navigation and URL handling inside the
 agent's local tools. Handle password/MFA prompts in the browser yourself.
 
 Pending PKCE credentials are stored privately in `pending-login.json` and deleted
-after a successful login. A failed login preserves the previous `auth.json`.
+after a successful login. A failed authentication attempt preserves the previous `auth.json`; Amazon still
+controls whether an older device registration remains valid.
 Login commands are serialized using `.login-lock` in the config directory. If a
 process is killed and leaves that directory behind, first ensure no login is
 running, then remove the empty `.login-lock` directory and retry.
@@ -225,6 +192,45 @@ may already have been accepted when a connection fails.
 remote deregistration fails, a warning is printed; deleting local credentials
 alone does not prove that Amazon deregistered the virtual device.
 
+## How It Works
+
+kindlecli uses Amazon's internal Send-to-Kindle API, the same undocumented API that powers Amazon's official desktop applications (Send to Kindle for Mac/PC). The authentication flow works as follows:
+
+1. **OAuth2 PKCE login** — opens a browser for standard Amazon sign-in with a PKCE code challenge
+2. **Token exchange** — exchanges the authorization code for an access token
+3. **Device registration** — registers a virtual device with Amazon, receiving an RSA private key and ADP authentication token
+4. **Signed API requests** — all subsequent API calls are signed with the RSA key using a custom PKCS#1 v1.5 padding scheme (SHA-256 hash, no DigestInfo prefix)
+
+The file upload process:
+
+1. Request a pre-signed upload URL from `stkservice.amazon.com`
+2. Upload the file via HTTP PUT to the pre-signed URL
+3. Send a delivery request to push the file to your Kindle devices
+
+## Project Structure
+
+| Path | Purpose |
+|------|---------|
+| `main.go`, `cmd/root.go` | CLI entry point, global flags and error exit handling |
+| `cmd/auth.go`, `cmd/login.go`, `cmd/logout.go` | Session diagnosis, interactive/two-step login and cleanup |
+| `cmd/send.go`, `cmd/devices.go` | Batch validation, delivery and device listing |
+| `internal/amazon/auth.go` | PKCE, token exchange and device registration |
+| `internal/amazon/stk.go`, `errors.go`, `models.go` | HTTP client, error classification and response validation |
+| `internal/amazon/signer.go` | Amazon's custom RSA request signing |
+| `internal/config/` | Atomic credential storage and its tests |
+| `cmd/*_test.go`, `internal/amazon/*_test.go` | CLI, authentication, HTTP and signing tests |
+| `.github/` | CI and dependency updates |
+| `docs/authentication-testing.md` | Live login verification and silent-renewal research |
+| `AGENTS.md` | Repository instructions for coding agents |
+
+## Security
+
+- Session credentials are stored at `~/.config/kindlecli/auth.json` with `0600` permissions (owner read/write only)
+- The saved RSA private key is used locally to sign requests; subsequent API calls do not include it
+- Credentials are replaced atomically; pending PKCE credentials also use private files
+- `kindlecli logout` attempts remote deregistration and deletes local credentials and pending login
+- No credentials are logged or transmitted to third parties
+
 ## Development
 
 Use a current stable Go release to build the binary (the module's minimum remains
@@ -245,3 +251,15 @@ Tests use synthetic credentials and local HTTP servers, never your Amazon accoun
 For the live authentication test and the remaining silent-renewal investigation,
 see [the testing guide](docs/authentication-testing.md). `login --verbose` reports
 only whether Amazon returned a refresh token; it never prints or stores that token.
+
+## Credits
+
+Inspired by [kindle-send](https://github.com/nikhil1raghav/kindle-send) and based on the Send-to-Kindle API reverse-engineered by [stkclient](https://github.com/maxdjohnson/stkclient).
+
+## Disclaimer
+
+This tool uses an undocumented Amazon API. It is not affiliated with or endorsed by Amazon. The API may change or break at any time.
+
+## License
+
+MIT
