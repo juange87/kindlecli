@@ -12,9 +12,11 @@ var cfgDir string
 var verbose bool
 
 var rootCmd = &cobra.Command{
-	Use:   "kindlecli",
-	Short: "Send files to your Kindle",
-	Long:  "A CLI tool for sending EPUBs and PDFs to your Kindle devices via Amazon's Send-to-Kindle service.",
+	Use:           "kindlecli",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Short:         "Send files to your Kindle",
+	Long:          "A CLI tool for sending EPUBs and PDFs to your Kindle devices via Amazon's Send-to-Kindle service.",
 }
 
 func Execute() {

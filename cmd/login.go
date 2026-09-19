@@ -20,6 +20,7 @@ var loginCmd = &cobra.Command{
 }
 
 func init() {
+	loginCmd.Flags().Bool("force", false, "authenticate even if a saved session exists")
 	rootCmd.AddCommand(loginCmd)
 }
 
@@ -29,10 +30,16 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		dir = config.DefaultDir()
 	}
 
-	// Check if already logged in
-	if _, err := config.Load(dir); err == nil {
-		fmt.Println("Already logged in. Use 'kindlecli logout' first to re-authenticate.")
-		return nil
+	force, _ := cmd.Flags().GetBool("force")
+	if !force {
+		status := inspectSession(dir, probeSession)
+		switch status.State {
+		case "valid":
+			fmt.Fprintln(cmd.OutOrStdout(), status.Message)
+			return nil
+		case "unavailable":
+			return fmt.Errorf("%s", status.Message)
+		}
 	}
 
 	amazon.Verbose = verbose
@@ -119,4 +126,3 @@ func openBrowser(url string) error {
 	}
 	return cmd.Start()
 }
-

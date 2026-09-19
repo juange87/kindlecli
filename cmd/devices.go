@@ -4,8 +4,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/juange87/kindlecli/internal/amazon"
-	"github.com/juange87/kindlecli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -20,19 +18,9 @@ func init() {
 }
 
 func runDevices(cmd *cobra.Command, args []string) error {
-	dir := cfgDir
-	if dir == "" {
-		dir = config.DefaultDir()
-	}
-
-	deviceInfo, err := config.Load(dir)
+	client, err := loadClient()
 	if err != nil {
-		return fmt.Errorf("not logged in. Run 'kindlecli login' first")
-	}
-
-	client, err := amazon.NewClient(deviceInfo)
-	if err != nil {
-		return fmt.Errorf("creating client: %w", err)
+		return err
 	}
 
 	devices, err := client.GetOwnedDevices()

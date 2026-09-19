@@ -34,6 +34,9 @@ type Client struct {
 
 // NewClient creates a Client from DeviceInfo.
 func NewClient(info DeviceInfo) (*Client, error) {
+	if strings.TrimSpace(info.ADPToken) == "" {
+		return nil, fmt.Errorf("missing device authentication token")
+	}
 	block, _ := pem.Decode([]byte(info.DevicePrivateKey))
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM private key")
@@ -215,7 +218,7 @@ func (c *Client) stkRequest(path string, payload map[string]any) ([]byte, error)
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("STK API error (%d) %s: %s", resp.StatusCode, path, string(body))
+		return nil, responseError(path, resp.StatusCode, body, true)
 	}
 	return body, nil
 }
