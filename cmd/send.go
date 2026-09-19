@@ -2,7 +2,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"github.com/juange87/kindlecli/internal/amazon"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,13 +43,62 @@ var supportedFormats = map[string]bool{
 	".html": true,
 }
 
+type document struct {
+	path, title, author string
+	size                int64
+}
+
+type documentSender interface {
+	GetOwnedDevices() ([]amazon.OwnedDevice, error)
+	SendFile(string, []string, string, string) (string, error)
+}
+
+func prepareDocuments(paths []string, title, author string) ([]document, []error) {
+	var documents []document
+	var failures []error
+	if author == "" {
+		author = "Unknown"
+	}
+	for _, path := range paths {
+		ext := strings.ToLower(filepath.Ext(path))
+		if !supportedFormats[ext] {
+			failures = append(failures, fmt.Errorf("%s: unsupported format %q", path, ext))
+			continue
+		}
+		stat, err := os.Stat(path)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", path, err))
+			continue
+		}
+		if !stat.Mode().IsRegular() || stat.Size() == 0 {
+			failures = append(failures, fmt.Errorf("%s: expected a nonempty regular file", path))
+			continue
+		}
+		name := title
+		if name == "" {
+			name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		}
+		documents = append(documents, document{path, name, author, stat.Size()})
+	}
+	return documents, failures
+}
+
 func runSend(cmd *cobra.Command, args []string) error {
+	documents, failures := prepareDocuments(args, sendTitle, sendAuthor)
+	for _, err := range failures {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Skipping:", err)
+	}
+	if len(documents) == 0 {
+		return fmt.Errorf("no files sent: %d invalid input(s)", len(failures))
+	}
 	client, err := loadClient()
 	if err != nil {
 		return err
 	}
+	return sendDocuments(cmd, client, documents, len(failures))
+}
 
-	// Get all devices
+func sendDocuments(cmd *cobra.Command, client documentSender, documents []document, failed int) error {
 	devices, err := client.GetOwnedDevices()
 	if err != nil {
 		return fmt.Errorf("getting devices: %w", err)
@@ -55,46 +106,28 @@ func runSend(cmd *cobra.Command, args []string) error {
 	if len(devices) == 0 {
 		return fmt.Errorf("no Kindle devices found on your account")
 	}
-
 	serials := make([]string, len(devices))
 	for i, d := range devices {
 		serials[i] = d.DeviceSerialNumber
 	}
-
-	// Send each file
-	for _, filePath := range args {
-		ext := strings.ToLower(filepath.Ext(filePath))
-		if !supportedFormats[ext] {
-			fmt.Fprintf(os.Stderr, "Skipping %s: unsupported format %q\n", filePath, ext)
-			continue
-		}
-
-		stat, err := os.Stat(filePath)
+	sent := 0
+	for i, doc := range documents {
+		fmt.Fprintf(cmd.OutOrStdout(), "Sending %s (%.1f MB)...\n", filepath.Base(doc.path), float64(doc.size)/1024/1024)
+		_, err := client.SendFile(doc.path, serials, doc.title, doc.author)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Skipping %s: %v\n", filePath, err)
+			failed++
+			fmt.Fprintf(cmd.ErrOrStderr(), "Failed to send %s: %v\n", doc.path, err)
+			if errors.Is(err, amazon.ErrSessionRejected) {
+				return fmt.Errorf("%d accepted, %d failed, %d unattempted: %w", sent, failed, len(documents)-i-1, err)
+			}
 			continue
 		}
-
-		title := sendTitle
-		if title == "" {
-			title = strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
-		}
-
-		sizeMB := float64(stat.Size()) / 1024 / 1024
-		fmt.Printf("Sending %s (%.1f MB)...\n", filepath.Base(filePath), sizeMB)
-
-		author := sendAuthor
-		if author == "" {
-			author = "Unknown"
-		}
-
-		_, err = client.SendFile(filePath, serials, title, author)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to send %s: %v\n", filePath, err)
-			continue
-		}
-		fmt.Printf("Sent to %d device(s).\n", len(devices))
+		sent++
+		fmt.Fprintf(cmd.OutOrStdout(), "Accepted by Amazon for %d device(s).\n", len(devices))
 	}
-
+	fmt.Fprintf(cmd.OutOrStdout(), "Result: %d accepted, %d failed.\n", sent, failed)
+	if failed > 0 {
+		return fmt.Errorf("%d file(s) failed; retry only those files to avoid duplicates", failed)
+	}
 	return nil
 }

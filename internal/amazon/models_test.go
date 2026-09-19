@@ -90,3 +90,20 @@ func TestSendToKindleResponseFromJSON(t *testing.T) {
 		t.Errorf("got sku=%q, want %q", resp.SKU, "sku123")
 	}
 }
+
+func TestRejectsServiceErrorsAndIncompleteResponses(t *testing.T) {
+	for _, data := range []string{`{}`, `null`, `{"statusCode":12}`, `{"statusCode":0}`, `{"statusCode":"secret"}`, `not-json`} {
+		if _, err := ParseGetOwnedDevicesResponse([]byte(data)); err == nil {
+			t.Errorf("accepted devices: %s", data)
+		}
+		if _, err := ParseGetUploadUrlResponse([]byte(data)); err == nil {
+			t.Errorf("accepted upload: %s", data)
+		}
+		if _, err := ParseSendToKindleResponse([]byte(data)); err == nil {
+			t.Errorf("accepted send: %s", data)
+		}
+	}
+	if _, err := ParseGetOwnedDevicesResponse([]byte(`{"statusCode":0,"ownedDevices":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -207,3 +207,11 @@ running, then remove the empty `.login-lock` directory and retry.
 This flow automates the handoff to the browser; it does not implement refresh
 of revoked device tokens. Silent token renewal still needs verification against
 Amazon's undocumented device API.
+
+## Batch results
+
+`send` checks input files before contacting Amazon and returns a nonzero exit code
+if any file is invalid or fails to upload. Successful files in a partially failed
+batch are not rolled back; retry only failed files to avoid duplicates. A rejected
+session stops the remaining batch. “Accepted by Amazon” confirms API acceptance,
+not that the document has already arrived on a Kindle.

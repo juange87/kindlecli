@@ -3,6 +3,7 @@ package amazon
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 )
 
 // DeviceInfo holds credentials returned by Amazon device registration.
@@ -45,7 +46,10 @@ type GetOwnedDevicesResponse struct {
 // ParseGetOwnedDevicesResponse parses JSON into a GetOwnedDevicesResponse.
 func ParseGetOwnedDevicesResponse(data []byte) (GetOwnedDevicesResponse, error) {
 	var resp GetOwnedDevicesResponse
-	err := json.Unmarshal(data, &resp)
+	err := decodeSTKResponse(data, &resp)
+	if err == nil && resp.OwnedDevices == nil {
+		err = fmt.Errorf("Amazon response is missing ownedDevices")
+	}
 	return resp, err
 }
 
@@ -60,7 +64,10 @@ type GetUploadUrlResponse struct {
 // ParseGetUploadUrlResponse parses JSON into a GetUploadUrlResponse.
 func ParseGetUploadUrlResponse(data []byte) (GetUploadUrlResponse, error) {
 	var resp GetUploadUrlResponse
-	err := json.Unmarshal(data, &resp)
+	err := decodeSTKResponse(data, &resp)
+	if err == nil && (resp.UploadURL == "" || resp.STKToken == "") {
+		err = fmt.Errorf("Amazon response is missing upload credentials")
+	}
 	return resp, err
 }
 
@@ -73,6 +80,28 @@ type SendToKindleResponse struct {
 // ParseSendToKindleResponse parses JSON into a SendToKindleResponse.
 func ParseSendToKindleResponse(data []byte) (SendToKindleResponse, error) {
 	var resp SendToKindleResponse
-	err := json.Unmarshal(data, &resp)
+	err := decodeSTKResponse(data, &resp)
+	if err == nil && resp.SKU == "" {
+		err = fmt.Errorf("Amazon did not confirm document acceptance")
+	}
 	return resp, err
+}
+
+func decodeSTKResponse(data []byte, dst any) error {
+	var status struct {
+		Code *int `json:"statusCode"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil {
+		return fmt.Errorf("invalid Amazon response JSON")
+	}
+	if status.Code == nil {
+		return fmt.Errorf("Amazon response is missing statusCode")
+	}
+	if *status.Code != 0 {
+		return fmt.Errorf("Amazon service returned statusCode %d", *status.Code)
+	}
+	if err := json.Unmarshal(data, dst); err != nil {
+		return fmt.Errorf("invalid Amazon response fields")
+	}
+	return nil
 }
