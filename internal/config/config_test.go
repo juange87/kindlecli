@@ -129,3 +129,23 @@ func TestSaveDoesNotFollowSymlink(t *testing.T) {
 		t.Fatal("followed symlink")
 	}
 }
+
+func TestDeviceSerialRoundTripAndLegacyFiles(t *testing.T) {
+	dir := t.TempDir()
+	serial := amazon.NewDeviceSerial()
+	if err := Save(dir, amazon.DeviceInfo{ADPToken: "token", DeviceSerialNumber: serial}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil || loaded.DeviceSerialNumber != serial || loaded.UsesSharedSerial() {
+		t.Fatalf("serial not preserved: %q %v", loaded.DeviceSerialNumber, err)
+	}
+	// Sessions saved by earlier versions have no serial field.
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"adp_token":"token"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = Load(dir)
+	if err != nil || !loaded.UsesSharedSerial() {
+		t.Fatal("legacy session not detected", err)
+	}
+}

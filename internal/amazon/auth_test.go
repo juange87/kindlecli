@@ -86,7 +86,7 @@ func TestRegistrationRejectsIncompleteCredentials(t *testing.T) {
 	mockHTTP(t, func(r *http.Request) (*http.Response, error) {
 		return mockResponse(200, `<response><adp_token>token</adp_token></response>`), nil
 	})
-	if _, err := registerDevice("token"); err == nil {
+	if _, err := registerDevice("token", NewDeviceSerial()); err == nil {
 		t.Fatal("accepted incomplete registration")
 	}
 }
@@ -98,6 +98,7 @@ func TestOAuthExchangeAndRegistration(t *testing.T) {
 	}
 	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	oauth := NewOAuth2()
+	serial := NewDeviceSerial()
 	calls := 0
 	mockHTTP(t, func(r *http.Request) (*http.Response, error) {
 		calls++
@@ -119,18 +120,24 @@ func TestOAuthExchangeAndRegistration(t *testing.T) {
 			if !strings.Contains(string(body), "access&lt;&amp;token") {
 				t.Fatal("token not XML escaped")
 			}
+			if !strings.Contains(string(body), "<deviceSerialNumber>"+serial+"</deviceSerialNumber>") || strings.Contains(string(body), LegacyDeviceSerial) {
+				t.Fatal("registration did not use the private serial")
+			}
 			return mockResponse(200, "<response><device_private_key>"+pemKey+"</device_private_key><adp_token>device-token</adp_token></response>"), nil
 		default:
 			t.Fatal("unexpected request")
 			return nil, nil
 		}
 	})
-	info, err := oauth.CreateClient("https://www.amazon.com/gp/sendtokindle?openid.oa2.authorization_code=test-code")
+	info, err := oauth.CreateClient("https://www.amazon.com/gp/sendtokindle?openid.oa2.authorization_code=test-code", serial)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 || info.ADPToken != "device-token" {
 		t.Fatal("incomplete authentication")
+	}
+	if info.DeviceSerialNumber != serial || info.UsesSharedSerial() {
+		t.Fatal("registered serial not recorded")
 	}
 	if _, err := NewClient(info); err != nil {
 		t.Fatal(err)
@@ -161,5 +168,53 @@ func TestVerboseTokenDiagnosticsDoNotLeakSecrets(t *testing.T) {
 	}
 	if strings.Contains(string(output), "secret") || !strings.Contains(string(output), "Refresh token returned: true") {
 		t.Fatalf("bad diagnostics: %s", output)
+	}
+}
+
+func TestNewDeviceSerialIsPrivateAndRandom(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		serial := NewDeviceSerial()
+		if !IsPrivateDeviceSerial(serial) || len(serial) != len(LegacyDeviceSerial) {
+			t.Fatalf("bad serial %q", serial)
+		}
+		if seen[serial] {
+			t.Fatal("serial repeated")
+		}
+		seen[serial] = true
+	}
+}
+
+func TestIsPrivateDeviceSerial(t *testing.T) {
+	for serial, want := range map[string]bool{
+		LegacyDeviceSerial:                 false,
+		"":                                 false,
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567": true,
+		"abcdefghijklmnopqrstuvwxyz234567": false,
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ23456":  false,
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ234561": false,
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ2345<>": false,
+	} {
+		if got := IsPrivateDeviceSerial(serial); got != want {
+			t.Errorf("%q: got %v", serial, got)
+		}
+	}
+	if !(DeviceInfo{}).UsesSharedSerial() {
+		t.Fatal("session without serial must count as legacy")
+	}
+}
+
+func TestRegistrationRefusesSharedOrInvalidSerial(t *testing.T) {
+	mockHTTP(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request")
+		return nil, nil
+	})
+	for _, serial := range []string{LegacyDeviceSerial, "", "bad"} {
+		if _, err := registerDevice("token", serial); err == nil {
+			t.Fatalf("accepted serial %q", serial)
+		}
+		if _, err := NewOAuth2().CreateClient("https://www.amazon.com/gp/sendtokindle?openid.oa2.authorization_code=c", serial); err == nil {
+			t.Fatalf("accepted serial %q", serial)
+		}
 	}
 }

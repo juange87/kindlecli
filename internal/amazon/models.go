@@ -17,6 +17,16 @@ type DeviceInfo struct {
 	UserDirectedID   string `json:"user_directed_id" xml:"user_directed_id"`
 	UserDeviceName   string `json:"user_device_name" xml:"user_device_name"`
 	HomeRegion       string `json:"home_region,omitempty" xml:"home_region"`
+	// DeviceSerialNumber is the serial this installation registered with. It is
+	// not part of Amazon's response. Empty means a session saved before
+	// per-installation serials, registered with LegacyDeviceSerial.
+	DeviceSerialNumber string `json:"device_serial_number,omitempty" xml:"-"`
+}
+
+// UsesSharedSerial reports whether the session was registered with the shared
+// legacy serial, which other clients can take over at any time.
+func (d DeviceInfo) UsesSharedSerial() bool {
+	return !IsPrivateDeviceSerial(d.DeviceSerialNumber)
 }
 
 // DeviceInfoFromXML parses an XML <response> element into a DeviceInfo.

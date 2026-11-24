@@ -32,7 +32,7 @@ func TestInspectSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got := inspectSession(dir, probe); got.State != "unavailable" {
+	if got := inspectSession(dir, probe); got.State != "invalid" {
 		t.Fatal(got)
 	}
 	if err := config.Save(dir, amazon.DeviceInfo{}); err != nil {

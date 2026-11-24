@@ -86,11 +86,16 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	if !force {
 		status := inspectSession(dir, probeSession)
-		if status.State == "valid" {
+		if status.State == "valid" && !status.LegacySerial {
 			return printLoginResult(cmd, asJSON, map[string]any{"state": "valid"}, status.Message)
 		}
+		if status.State == "valid" {
+			// Accepted today, but revocable by any other client using the shared
+			// serial: replace it with a private registration.
+			fmt.Fprintln(cmd.ErrOrStderr(), "The saved session uses the shared legacy device serial; registering a private device so it stops being revoked.")
+		}
 		if status.State == "unavailable" {
-			return fmt.Errorf("%s", status.Message)
+			return &codedError{exitUnavailable, fmt.Errorf("%s", status.Message)}
 		}
 	}
 	attempt := pendingLogin{OAuth: *amazon.NewOAuth2(), CreatedAt: time.Now().UTC()}
@@ -164,7 +169,7 @@ func finishLogin(cmd *cobra.Command, dir string, clipboard, asJSON bool) error {
 	if redirectURL == "" {
 		return fmt.Errorf("redirect URL is empty")
 	}
-	info, err := attempt.OAuth.CreateClient(redirectURL)
+	info, err := attempt.OAuth.CreateClient(redirectURL, deviceSerialFor(dir))
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w; restart with 'kindlecli login --start' if the code has expired or was already used", err)
 	}
@@ -175,6 +180,17 @@ func finishLogin(cmd *cobra.Command, dir string, clipboard, asJSON bool) error {
 		return fmt.Errorf("session saved, but could not remove pending login: %w", err)
 	}
 	return printLoginResult(cmd, asJSON, map[string]any{"state": "authenticated"}, "Authenticated. Session saved. Run 'kindlecli auth status' to verify it.")
+}
+
+// deviceSerialFor reuses this config directory's private serial, so logging in
+// again replaces its own device registration instead of adding another device
+// to the account. Sessions without one (or with the shared legacy serial) get a
+// new random serial.
+func deviceSerialFor(dir string) string {
+	if info, err := config.Load(dir); err == nil && !info.UsesSharedSerial() {
+		return info.DeviceSerialNumber
+	}
+	return amazon.NewDeviceSerial()
 }
 
 func printLoginResult(cmd *cobra.Command, asJSON bool, value any, message string) error {

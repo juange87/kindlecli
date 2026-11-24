@@ -97,12 +97,12 @@ func runSend(cmd *cobra.Command, args []string) error {
 	if len(documents) == 0 {
 		return fmt.Errorf("no files sent: %d invalid input(s)", len(failures))
 	}
-	client, err := loadClient()
+	client, info, err := loadClient()
 	if err != nil {
 		return err
 	}
 	client.UploadTimeout = timeout
-	return sendDocuments(cmd, client, documents, len(failures))
+	return explainRejection(info, sendDocuments(cmd, client, documents, len(failures)))
 }
 
 func sendDocuments(cmd *cobra.Command, client documentSender, documents []document, failed int) error {

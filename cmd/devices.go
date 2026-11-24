@@ -18,14 +18,14 @@ func init() {
 }
 
 func runDevices(cmd *cobra.Command, args []string) error {
-	client, err := loadClient()
+	client, info, err := loadClient()
 	if err != nil {
 		return err
 	}
 
 	devices, err := client.GetOwnedDevices()
 	if err != nil {
-		return fmt.Errorf("getting devices: %w", err)
+		return explainRejection(info, fmt.Errorf("getting devices: %w", err))
 	}
 
 	if len(devices) == 0 {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -27,7 +29,31 @@ const (
 	signinBase  = "https://www.amazon.com/ap/signin"
 	tokenURL    = "https://api.amazon.com/auth/token"
 	registerURL = "https://firs-ta-g7g.amazon.com/FirsProxy/registerDeviceWithToken"
+
+	// LegacyDeviceSerial is the serial hardcoded by stkclient and by kindlecli
+	// before per-installation serials. It is public, so every client using it
+	// registers the same pseudo-device: each new registration, from any Amazon
+	// account, invalidates the previous one with "Failed to validate DeviceInfoToken".
+	LegacyDeviceSerial = "ZYSQ37GQ5JQDAIKDZ3WYH6I74MJCVEGG"
 )
+
+var deviceSerialPattern = regexp.MustCompile(`^[A-Z2-7]{32}$`)
+
+// NewDeviceSerial returns a random 32-character serial with the same base32
+// format as the legacy one (160 random bits).
+func NewDeviceSerial() string {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
+}
+
+// IsPrivateDeviceSerial reports whether serial is a well-formed serial other
+// than the shared legacy one.
+func IsPrivateDeviceSerial(serial string) bool {
+	return serial != LegacyDeviceSerial && deviceSerialPattern.MatchString(serial)
+}
 
 type OAuth2 struct {
 	Verifier string `json:"verifier"`
@@ -73,7 +99,12 @@ func (o *OAuth2) SignInURL(fresh bool) string {
 // Verbose controls whether auth progress is logged to stderr.
 var Verbose bool
 
-func (o *OAuth2) CreateClient(redirectURL string) (DeviceInfo, error) {
+// CreateClient exchanges the redirect URL's authorization code and registers a
+// device with deviceSerial, which must satisfy IsPrivateDeviceSerial.
+func (o *OAuth2) CreateClient(redirectURL, deviceSerial string) (DeviceInfo, error) {
+	if !IsPrivateDeviceSerial(deviceSerial) {
+		return DeviceInfo{}, fmt.Errorf("invalid device serial")
+	}
 	code, err := parseAuthorizationCode(redirectURL)
 	if err != nil {
 		return DeviceInfo{}, err
@@ -92,7 +123,7 @@ func (o *OAuth2) CreateClient(redirectURL string) (DeviceInfo, error) {
 	}
 
 	fmt.Fprintf(os.Stderr, "  Registering device...\n")
-	info, err := registerDevice(accessToken)
+	info, err := registerDevice(accessToken, deviceSerial)
 	if err != nil {
 		return DeviceInfo{}, fmt.Errorf("device registration: %w", err)
 	}
@@ -167,13 +198,16 @@ func tokenExchange(authCode, codeVerifier string) (string, error) {
 	return result.AccessToken, nil
 }
 
-func registerDevice(accessToken string) (DeviceInfo, error) {
+func registerDevice(accessToken, deviceSerial string) (DeviceInfo, error) {
+	if !IsPrivateDeviceSerial(deviceSerial) {
+		return DeviceInfo{}, fmt.Errorf("invalid device serial")
+	}
 	var escaped bytes.Buffer
 	if err := xml.EscapeText(&escaped, []byte(accessToken)); err != nil {
 		return DeviceInfo{}, err
 	}
 	xmlBody := fmt.Sprintf(`<?xml version='1.0' encoding='UTF-8'?>
-<request><parameters><deviceType>A1K6D1WRW0MALS</deviceType><deviceSerialNumber>ZYSQ37GQ5JQDAIKDZ3WYH6I74MJCVEGG</deviceSerialNumber><pid>D21NN3GG</pid><authToken>%s</authToken><authTokenType>AccessToken</authTokenType><softwareVersion>253</softwareVersion><os_version>MacOSX_10.14.6_x64</os_version><device_model>KindleCLI</device_model></parameters></request>`, escaped.String())
+<request><parameters><deviceType>A1K6D1WRW0MALS</deviceType><deviceSerialNumber>%s</deviceSerialNumber><pid>D21NN3GG</pid><authToken>%s</authToken><authTokenType>AccessToken</authTokenType><softwareVersion>253</softwareVersion><os_version>MacOSX_10.14.6_x64</os_version><device_model>KindleCLI</device_model></parameters></request>`, deviceSerial, escaped.String())
 
 	req, _ := http.NewRequest("POST", registerURL, strings.NewReader(xmlBody))
 	req.Header.Set("Content-Type", "text/xml")
@@ -200,6 +234,7 @@ func registerDevice(accessToken string) (DeviceInfo, error) {
 	if err != nil {
 		return DeviceInfo{}, fmt.Errorf("invalid device registration response")
 	}
+	info.DeviceSerialNumber = deviceSerial
 	if _, err := NewClient(info); err != nil {
 		return DeviceInfo{}, fmt.Errorf("Amazon returned invalid device credentials")
 	}
