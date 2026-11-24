@@ -43,8 +43,8 @@ final fue `valid`, y la línea `Refresh token returned: true/false`. No comparti
 URLs de retorno, códigos, contraseñas, claves ni los archivos JSON de credenciales.
 
 No ejecutar `logout` como preparación de la prueba: daría de baja el dispositivo.
-No usar otra carpeta de configuración como supuesto aislamiento remoto: el
-protocolo heredado usa un número de serie fijo en el registro de Amazon.
+Cada carpeta de configuración registra ahora su propio número de serie; una
+carpeta con un `auth.json` copiado de otra comparte el serie y se revocan entre sí.
 
 ## Prueba del flujo para una skill
 
@@ -74,6 +74,41 @@ un lote completo que tuvo envíos aceptados.
 Un intento caducado necesita un nuevo `--start`. Un nuevo inicio sustituye al
 anterior. Si un proceso muere durante login, comprobar que ya no está ejecutándose
 y eliminar únicamente el directorio vacío `.login-lock` antes de reintentar.
+
+## Causa de las sesiones rechazadas (24 de noviembre de 2026)
+
+La sesión guardada el 19 de septiembre volvió a devolver `rejected`
+(`HTTP 403` en `/GetListOfOwnedDevices`). Las credenciales del dispositivo no
+caducan por tiempo: no hay cookies, ninguna respuesta rota tokens y el guardado es
+atómico. Solo `login` y `logout` modifican `auth.json`.
+
+Causa muy probable: el registro usaba el número de serie fijo
+`ZYSQ37GQ5JQDAIKDZ3WYH6I74MJCVEGG`, copiado de stkclient y público. Amazon
+mantiene un registro por número de serie; cualquier otro registro con ese serie
+(otra máquina, otra carpeta `--config` o cualquier usuario de stkclient o de un
+port) sustituye al anterior y lo invalida con `Failed to validate DeviceInfoToken`.
+El PR upstream https://github.com/maxdjohnson/stkclient/pull/199 reproduce ese
+mismo 403 al registrar el serie desde varias cuentas y lo evita con series
+distintos.
+
+Cambio: cada carpeta de configuración genera un serie aleatorio (20 bytes
+aleatorios en base32, mismo formato que el original), lo guarda como
+`device_serial_number` y lo reutiliza en los siguientes login. Las sesiones sin
+ese campo aparecen como `legacy_serial: true`; `login` las sustituye aunque sigan
+siendo válidas. La confirmación real es que una sesión migrada siga `valid`
+durante varios días con comprobaciones periódicas de `auth status`.
+
+Prueba de la migración (con el binario nuevo, no con el instalado):
+
+```bash
+go build -o /tmp/kindlecli-nuevo .
+/tmp/kindlecli-nuevo auth status --json   # rejected o legacy_serial: true, exit 2/0
+/tmp/kindlecli-nuevo login
+/tmp/kindlecli-nuevo auth status --json   # valid, sin legacy_serial, exit 0
+/tmp/kindlecli-nuevo devices
+```
+
+Un `login --force` con una versión anterior vuelve a registrar el serie compartido.
 
 ## Investigación de renovación silenciosa
 

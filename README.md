@@ -61,7 +61,7 @@ go build -o kindlecli .
 kindlecli login
 ```
 
-If your saved session is valid, this reuses it without opening a browser. Otherwise, it opens your browser for Amazon OAuth2 login. After signing in, you'll be redirected to the Send to Kindle page. Paste the full URL from the address bar into the terminal prompt. Use `kindlecli login --clipboard` for the clipboard workflow.
+If your saved session is valid, this reuses it without opening a browser (sessions saved by versions before per-installation device serials are replaced; see [Session lifetime](#session-lifetime)). Otherwise, it opens your browser for Amazon OAuth2 login. After signing in, you'll be redirected to the Send to Kindle page. Paste the full URL from the address bar into the terminal prompt. Use `kindlecli login --clipboard` for the clipboard workflow.
 
 Your session is saved locally at `~/.config/kindlecli/auth.json`.
 
@@ -118,7 +118,7 @@ not be confirmed. You do not need to log out before recovering a rejected sessio
 | Command | Description |
 |---------|-------------|
 | `login` | Reuse a valid session or authenticate with Amazon via browser OAuth2 |
-| `auth status [--json]` | Verify the saved session with Amazon; exit 0 only when valid |
+| `auth status [--json]` | Verify the saved session with Amazon; exit 0 valid, 2 login required, 3 Amazon unreachable |
 | `send` | Upload and send files to all Kindle devices |
 | `devices` | List all Kindle devices on your account |
 | `logout` | Attempt remote deregistration and delete local credentials and pending login |
@@ -156,9 +156,21 @@ with `--force`, `--fresh`, or `--no-browser`; `--start` cannot use `--clipboard`
 ## Session recovery and automation
 
 `kindlecli auth status` checks the saved credentials with Amazon without sending a
-file. `--json` returns `state` and `message`. States are `valid`, `missing`,
-`invalid`, `rejected`, and `unavailable`; only `valid` exits with code 0.
+file, opening a browser or changing credentials. `--json` returns `state`,
+`message`, `exit_code` and, for sessions registered with the shared legacy serial,
+`legacy_serial: true`. Exit codes, also used by `send` and `devices`:
+
+| Exit code | `state` | Meaning |
+|-----------|---------|---------|
+| `0` | `valid` | Amazon accepts the session |
+| `2` | `missing`, `invalid`, `rejected` | Run `kindlecli login` |
+| `3` | `unavailable` | Network or service error; credentials preserved, try again later |
+| `1` | — | Other errors (invalid arguments, failed uploads, …) |
+
 A network or service error is `unavailable`, not proof that you need to log in.
+An unreadable or corrupt `auth.json` is `invalid`. A scheduled check such as
+`kindlecli auth status --json` every day or two lets an automation warn before a
+send fails.
 
 `kindlecli login` reuses a valid session and replaces rejected credentials only
 when authentication succeeds. Use `--force` to replace a session explicitly.
@@ -196,6 +208,25 @@ running, then remove the empty `.login-lock` directory and retry.
 This flow automates the handoff to the browser; it does not implement refresh
 of revoked device tokens. Silent token renewal still needs verification against
 Amazon's undocumented device API.
+
+### Session lifetime
+
+Sessions do not expire on a timer: the RSA key and ADP token from device
+registration stay valid until that device registration is replaced or removed.
+Amazon's token exchange for this client returns no refresh token, so a revoked
+registration can only be recovered with `kindlecli login`.
+
+Versions before per-installation serials (and stkclient, from which the protocol
+was ported) registered every installation with the same public device serial.
+Amazon keeps a single registration per serial, so any login with that serial —
+from another machine, another `--config` directory, or anyone else using the
+same code — revoked the saved session with `HTTP 403: Failed to validate
+DeviceInfoToken`. kindlecli now registers a random serial per config directory,
+stores it in `auth.json` as `device_serial_number`, and reuses it on later logins
+so the account does not accumulate devices. Sessions without it report
+`legacy_serial: true` and `login` replaces them even while Amazon still accepts
+them. Log in once with this version to migrate; the old shared device may remain
+listed under *Manage Your Content and Devices* and can be removed there.
 
 ## Batch results
 
@@ -235,8 +266,9 @@ The file upload process:
 |------|---------|
 | `main.go`, `cmd/root.go` | CLI entry point, global flags and error exit handling |
 | `cmd/auth.go`, `cmd/login.go`, `cmd/logout.go` | Session diagnosis, interactive/two-step login and cleanup |
+| `cmd/exit.go` | Exit-code contract for automation |
 | `cmd/send.go`, `cmd/devices.go` | Batch validation, delivery and device listing |
-| `internal/amazon/auth.go` | PKCE, token exchange and device registration |
+| `internal/amazon/auth.go` | PKCE, token exchange, device serials and device registration |
 | `internal/amazon/stk.go`, `errors.go`, `models.go` | HTTP client, error classification and response validation |
 | `internal/amazon/signer.go` | Amazon's custom RSA request signing |
 | `internal/config/` | Atomic credential storage and its tests |

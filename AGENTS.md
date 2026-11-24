@@ -23,11 +23,14 @@ directory, skip CodeGraph; do not create an index without the user's request.
 
 ## Authentication invariants
 
-- Reuse saved credentials while Amazon accepts them. File existence and elapsed
-  time alone do not establish session validity or expiry.
+- Reuse saved credentials while Amazon accepts them, except sessions registered
+  with the shared legacy serial (`legacy_serial`), which `login` replaces. File
+  existence and elapsed time alone do not establish session validity or expiry.
 - `auth status --json` returns `valid`, `missing`, `invalid`, `rejected`, or
-  `unavailable`; only `valid` exits with code 0. Do not equate network errors or
-  generic HTTP 403 responses with rejected credentials.
+  `unavailable`. Exit codes (`cmd/exit.go`, also for `send`/`devices`): 0 valid,
+  2 login required (missing/invalid/rejected or session rejection), 3 Amazon
+  unreachable, 1 other errors. Do not equate network errors or generic HTTP 403
+  responses with rejected credentials.
 - Recover through `login`, not a preliminary `logout`. Preserve the saved session
   until replacement credentials have been received, validated and saved.
 - `login --start --json` returns `valid` or `pending`. For `pending`, the browser
@@ -42,8 +45,12 @@ directory, skip CodeGraph; do not create an index without the user's request.
 - Silent token renewal is not implemented or proven. Verbose output reports only
   whether a refresh token was returned. Do not infer support from generic Login
   with Amazon documentation or add an unverified refresh/localhost callback flow.
-- The legacy registration serial is fixed. Different `--config` directories do
-  not guarantee independent device registrations on Amazon.
+- Each config directory registers its own random device serial, stored in
+  `auth.json` as `device_serial_number` and reused on re-login. Never register
+  `amazon.LegacyDeviceSerial`: it is public, and a second registration of a serial
+  (any account, any client) revokes the previous one with HTTP 403
+  "Failed to validate DeviceInfoToken". Copying `auth.json` between directories
+  shares the serial, so logging in from one revokes the other.
 
 ## Delivery and HTTP behavior
 
